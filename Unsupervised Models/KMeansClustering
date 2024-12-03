@@ -1,0 +1,82 @@
+from sklearn.preprocessing import LabelEncoder
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import mysql.connector
+
+# MySQL connection settings
+db_config = {
+    'user': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'database': 'chess_openings'
+}
+
+# Connect to MySQL and fetch data
+conn = mysql.connector.connect(**db_config)
+query = """
+SELECT opening_name, WhiteElo, BlackElo, endgame FROM openings WHERE endgame != 'endgame not reached';
+"""  # Modify table name or columns if needed
+df = pd.read_sql(query, conn)
+conn.close()
+
+# Display the first few rows of the data
+print("Data fetched from MySQL:")
+print(df.head())
+
+# Label encode the categorical feature (opening_name and endgame_label)
+label_encoder_opening = LabelEncoder()
+df['opening_encoded'] = label_encoder_opening.fit_transform(df['opening_name'])
+
+label_encoder_endgame = LabelEncoder()
+df['endgame_encoded'] = label_encoder_endgame.fit_transform(df['endgame'])
+
+# Create a feature set for clustering
+features = df[['opening_encoded', 'WhiteElo', 'BlackElo', 'endgame_encoded']]
+
+# Standardize Elo ratings and endgame labels
+scaler = StandardScaler()
+features[['WhiteElo', 'BlackElo', 'endgame_encoded', 'opening_endcoded']] = scaler.fit_transform(features[['WhiteElo', 'BlackElo', 'endgame_encoded', 'opening_encoded']])
+
+# Apply K-Means clustering with varying numbers of clusters and evaluate with Silhouette scores
+silhouette_scores = []
+k_values = range(2, 5)  # Test clusters from 2 to 4
+
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    cluster_labels = kmeans.fit_predict(features)
+    score = silhouette_score(features, cluster_labels)
+    silhouette_scores.append(score)
+    
+    # Visualize clusters in 2D using PCA (reduce dimensions for visualization)
+    pca = PCA(n_components=2)
+    reduced_features = pca.fit_transform(features)
+    df['PCA1'] = reduced_features[:, 0]
+    df['PCA2'] = reduced_features[:, 1]
+    df['Cluster'] = cluster_labels
+
+    # Plot the clusters for this k
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x='PCA1', y='PCA2', hue='Cluster', palette='Set2')
+    plt.title(f"Clusters Visualized in 2D Space for k={k}")
+    plt.xlabel("PCA Component 1")
+    plt.ylabel("PCA Component 2")
+    plt.legend(title="Cluster")
+    plt.show()
+
+# Plot the Silhouette scores
+plt.figure(figsize=(8, 5))
+plt.plot(k_values, silhouette_scores, marker='o', linestyle='--', color='b')
+plt.title("Silhouette Scores for Different Numbers of Clusters (Opening, Elo, Endgame)")
+plt.xlabel("Number of Clusters (k)")
+plt.ylabel("Silhouette Score")
+plt.grid()
+plt.show()
+
+# Choose the best k based on the highest Silhouette score
+optimal_k = k_values[silhouette_scores.index(max(silhouette_scores))]
+print(f"Optimal number of clusters based on Silhouette score: {optimal_k}")

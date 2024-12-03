@@ -1,0 +1,156 @@
+import mysql.connector
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+import matplotlib.pyplot as plt
+from keras.optimizers import Adam
+from sklearn.metrics import f1_score
+
+
+# Create a custom Adam optimizer with a lower learning rate
+optimizer = Adam(learning_rate=0.001)
+
+
+# MySQL database configuration
+db_config = {
+    'username': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'port': 3306,
+    'database': 'chess_openings'
+}
+
+# Create a connection to the database
+connection = mysql.connector.connect(
+    host=db_config['host'],
+    user=db_config['username'],
+    password=db_config['password'],
+    database=db_config['database'],
+    port=db_config['port']
+)
+
+# Query to get the chess opening data
+query = "SELECT opening_name, WhiteElo, BlackElo, Event, First10Moves, Result, endgame FROM openings WHERE endgame != 'endgame not reached'"
+
+# Retrieve data into a pandas dataframe
+df = pd.read_sql(query, connection)
+
+# Close the connection
+connection.close()
+
+# Show the first few rows
+print(df.head())
+
+# Label encode the 'endgame' column
+le_endgame = LabelEncoder()
+df['endgame'] = le_endgame.fit_transform(df['endgame'])
+
+# Label encode the 'opening_name', 'Result', and 'Event' columns
+le_opening_name = LabelEncoder()
+df['opening_name'] = le_opening_name.fit_transform(df['opening_name'])
+
+le_result = LabelEncoder()
+df['Result'] = le_result.fit_transform(df['Result'])
+
+le_event = LabelEncoder()
+df['Event'] = le_event.fit_transform(df['Event'])
+
+# Optional: Tokenize 'First10Moves' if you want to include it, for simplicity we can drop it for now
+# df['First10Moves'] = df['First10Moves'].apply(lambda x: ' '.join(str(i) for i in x.split()))
+
+# Drop 'First10Moves' as per the decision
+df = df.drop(columns=['First10Moves'])
+
+# Scale the numerical columns (WhiteElo, BlackElo)
+scaler = StandardScaler()
+df[['WhiteElo', 'BlackElo']] = scaler.fit_transform(df[['WhiteElo', 'BlackElo']])
+
+# Split the data into features and labels
+X = df.drop('endgame', axis=1)  # Features (everything except 'endgame')
+y = df['endgame']  # Target variable is 'endgame'
+
+# Check the class distribution before balancing
+print("Class distribution before balancing:", Counter(y))
+
+# Remove classes with fewer than 2 samples
+min_samples = 2
+class_counts = y.value_counts()
+valid_classes = class_counts[class_counts >= min_samples].index
+
+# Filter the dataset to only include valid classes
+X = X[y.isin(valid_classes)]
+y = y[y.isin(valid_classes)]
+
+# Check class distribution after filtering
+print("Class distribution after filtering rare classes:", Counter(y))
+
+# Use SMOTE with adjusted n_neighbors
+smote = SMOTE(random_state=42, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(X, y)
+
+# Check class distribution after SMOTE
+print("Class distribution after balancing:", Counter(y_balanced))
+
+# Split the balanced dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+
+# Create a simple neural network model
+model = Sequential()
+model.add(Dense(128, input_dim=X_train.shape[1], activation='relu'))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(128, activation='relu'))
+model.add(Dropout(.08))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(len(le_endgame.classes_), activation='softmax'))  # Output layer, number of classes
+
+# Compile the model
+model.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=128, batch_size=256, validation_data=(X_test, y_test))
+
+# Evaluate the model
+loss, accuracy = model.evaluate(X_test, y_test)
+print(f'Accuracy: {accuracy:.2f}')
+
+# Predict the 'endgame' for new data
+predictions = model.predict(X_test)
+predicted_classes = predictions.argmax(axis=1)  # Get the class with the highest probability
+
+# Calculate the F1 score (use 'weighted' to handle class imbalance)
+f1 = f1_score(y_test, predicted_classes, average='weighted')
+print(f'F1 Score (Weighted): {f1:.2f}')
+
+# Show the predicted endgames for the first few test samples
+predicted_endgames = le_endgame.inverse_transform(predicted_classes)
+print(predicted_endgames[:1000])  # Display first 1000 predictions
+
+
+# Plot the training and validation accuracy
+plt.figure(figsize=(12, 6))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Model Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+
+# Plot the training and validation loss
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Model Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+
+# Show the plots
+plt.tight_layout()
+plt.show()

@@ -1,0 +1,75 @@
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import mysql.connector
+import numpy as np
+
+# MySQL connection settings
+db_config = {
+    'user': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'database': 'chess_openings'
+}
+
+# Fetch data
+conn = mysql.connector.connect(**db_config)
+query = """
+SELECT opening_name, WhiteElo, BlackElo FROM openings;
+"""
+df = pd.read_sql(query, conn)
+conn.close()
+
+# Create a new column for average Elo
+df['AverageElo'] = df[['WhiteElo', 'BlackElo']].mean(axis=1)
+
+# Encode the categorical feature (opening_name)
+label_encoder = LabelEncoder()
+df['opening_encoded'] = label_encoder.fit_transform(df['opening_name'])
+
+# Feature set for clustering
+features = df[['opening_encoded', 'AverageElo']]
+
+# Standardize the features
+scaler = StandardScaler()
+features_scaled = scaler.fit_transform(features)
+
+# Perform hierarchical clustering
+linked = linkage(features_scaled, method='ward')  # Ward's method minimizes variance
+
+# Plot the dendrogram
+plt.figure(figsize=(10, 7))
+dendrogram(linked, truncate_mode='lastp', p=20, leaf_rotation=45, leaf_font_size=10)
+plt.title('Dendrogram (Hierarchical Clustering)')
+plt.xlabel('Cluster Size')
+plt.ylabel('Euclidean Distance')
+plt.show()
+
+# Determine clusters using a cutoff distance
+cutoff_distance = 5  # Adjust based on dendrogram
+df['Cluster'] = fcluster(linked, t=cutoff_distance, criterion='distance')
+
+# Visualize clusters in 2D using PCA
+pca = PCA(n_components=2)
+reduced_features = pca.fit_transform(features_scaled)
+df['PCA1'] = reduced_features[:, 0]
+df['PCA2'] = reduced_features[:, 1]
+
+plt.figure(figsize=(10, 7))
+sns.scatterplot(data=df, x='PCA1', y='PCA2', hue='Cluster', palette='Set2', legend='full')
+plt.title("Hierarchical Clusters Visualized in 2D Space")
+plt.xlabel("PCA Component 1")
+plt.ylabel("PCA Component 2")
+plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.show()
+
+# Cluster analysis
+for cluster in sorted(df['Cluster'].unique()):
+    cluster_data = df[df['Cluster'] == cluster]
+    print(f"Cluster {cluster}:")
+    print(cluster_data['opening_name'].value_counts().head(5))
+    print("Average Elo:", cluster_data['AverageElo'].mean())
+    print("\n")

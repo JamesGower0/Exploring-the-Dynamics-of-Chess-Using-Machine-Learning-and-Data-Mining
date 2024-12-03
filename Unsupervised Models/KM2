@@ -1,0 +1,95 @@
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import mysql.connector
+
+# MySQL connection settings
+db_config = {
+    'user': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'database': 'chess_openings'
+}
+
+# Connect to MySQL and fetch data
+conn = mysql.connector.connect(**db_config)
+query = """
+SELECT opening_name, WhiteElo, BlackElo FROM openings;
+"""  # Modify the table name if needed
+df = pd.read_sql(query, conn)
+conn.close()
+
+# Display the first few rows of the data
+print("Data fetched from MySQL:")
+print(df.head())
+
+# Create a new column for average Elo
+df['AverageElo'] = df[['WhiteElo', 'BlackElo']].mean(axis=1)
+
+# Encode the categorical feature (opening_name)
+label_encoder = LabelEncoder()
+df['opening_encoded'] = label_encoder.fit_transform(df['opening_name'])
+
+# Feature set for clustering
+features = df[['opening_encoded', 'AverageElo']]
+
+# Standardize the features
+scaler = StandardScaler()
+features_scaled = scaler.fit_transform(features)
+
+# Apply K-Means clustering with varying numbers of clusters and evaluate with Silhouette scores
+silhouette_scores = []
+k_values = range(5,6)  # Test clusters from 2 to 5
+
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    cluster_labels = kmeans.fit_predict(features_scaled)
+    score = silhouette_score(features_scaled, cluster_labels)
+    silhouette_scores.append(score)
+
+    # Visualize clusters in 2D using PCA (reduce dimensions for visualization)
+    pca = PCA(n_components=2)
+    reduced_features = pca.fit_transform(features_scaled)
+    df['PCA1'] = reduced_features[:, 0]
+    df['PCA2'] = reduced_features[:, 1]
+    df['Cluster'] = cluster_labels
+
+    
+    # Plot the clusters for this k
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x='PCA1', y='PCA2', hue='Cluster', palette='Set2')
+    plt.title(f"Clusters Visualized in 2D Space for k={k}")
+    plt.xlabel("PCA Component 1")
+    plt.ylabel("PCA Component 2")
+    plt.legend(title="Cluster")
+    plt.show()
+
+# Plot the Silhouette scores
+plt.figure(figsize=(8, 5))
+plt.plot(k_values, silhouette_scores, marker='o', linestyle='--', color='b')
+plt.title("Silhouette Scores for Different Numbers of Clusters (Opening and Elo)")
+plt.xlabel("Number of Clusters (k)")
+plt.ylabel("Silhouette Score")
+plt.grid()
+plt.show()
+
+# Choose the best k based on the highest Silhouette score
+optimal_k = k_values[silhouette_scores.index(max(silhouette_scores))]
+print(f"Optimal number of clusters based on Silhouette score: {optimal_k}")
+
+# Final K-Means clustering with the optimal number of clusters
+kmeans = KMeans(n_clusters=optimal_k, random_state=42)
+df['Cluster'] = kmeans.fit_predict(features_scaled)
+
+# Analyze the clusters
+for cluster in range(optimal_k):
+    cluster_data = df[df['Cluster'] == cluster]
+    popular_openings = cluster_data['opening_name'].value_counts().head(5)
+    print(f"Cluster {cluster}:")
+    print(popular_openings)
+    print("Average Elo in cluster:", cluster_data['AverageElo'].mean())
+    print("\n")
