@@ -1,0 +1,97 @@
+# Opening Frequency Analysis and Visualisation
+
+import mysql.connector
+import pandas as pd
+import plotly.express as px
+
+# MySQL connection settings
+db_config = {
+    'user': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'database': 'chess_openings'
+}
+
+# Connect to the database
+conn = mysql.connector.connect(**db_config)
+
+# SQL query to retrieve relevant data
+query = """
+SELECT opening_name, COUNT(*) AS game_count, 
+       CONCAT(year, '-', LPAD(month, 2, '0'), '-01') AS date
+FROM openings
+GROUP BY opening_name, year, month
+ORDER BY year, month ASC;
+"""
+
+# Execute query and load data into a Pandas DataFrame
+df = pd.read_sql(query, conn)
+
+# Close the connection
+conn.close()
+
+# Convert 'date' column to datetime
+df['date'] = pd.to_datetime(df['date'])
+
+# Create a full range of months from Dec 2012 to Dec 2013
+full_date_range = pd.date_range(start="2012-12-01", end="2013-12-01", freq='MS')
+
+# Create a DataFrame with every month in the range and merge with the original data
+full_df = pd.DataFrame({'date': full_date_range})
+df = pd.merge(full_df, df, on='date', how='left')
+
+# Fill missing values for `opening_name` and `game_count` with default values
+df['opening_name'] = df['opening_name'].fillna('No Data')
+df['game_count'] = df['game_count'].fillna(0)
+
+# Calculate total games per month
+monthly_totals = df.groupby('date')['game_count'].sum().reset_index()
+monthly_totals.rename(columns={'game_count': 'total_games'}, inplace=True)
+
+# Merge total games back into the original DataFrame
+df = pd.merge(df, monthly_totals, on='date')
+
+# Calculate the percentage of games played for each opening
+df['percentage'] = (df['game_count'] / df['total_games']) * 100
+df['percentage'] = df['percentage'].fillna(0)  # Fill NaN percentages with 0
+
+# Calculate total games for each opening across the dataset
+total_opening_counts = (
+    df.groupby('opening_name')['game_count']
+    .sum()
+    .reset_index()
+    .sort_values('game_count', ascending=False)
+)
+
+# Select the top 15 most popular openings
+top_15_openings = total_opening_counts.head(15)['opening_name'].tolist()
+
+# Filter the dataset to include only the top 15 openings
+df_top_15 = df[df['opening_name'].isin(top_15_openings)]
+
+# Format the date for better x-axis display
+df_top_15['formatted_date'] = df_top_15['date'].dt.strftime('%b %Y')
+
+# Create the interactive line chart using Plotly
+fig = px.line(
+    df_top_15,
+    x="formatted_date",
+    y="percentage",
+    color="opening_name",
+    title="Chess Opening Popularity Over Time (Top 20 Openings)",
+    labels={"formatted_date": "Time (Months)", "percentage": "% of Games Played"},
+    hover_data={"opening_name": True, "percentage": ":.2f"},
+)
+
+# Customize the layout
+fig.update_layout(
+    xaxis_title="Time (Months)",
+    yaxis_title="% of Games Played",
+    legend_title="Opening Name",
+    xaxis_tickangle=45,
+    template="plotly_white",
+    hovermode="x unified",  # Makes tooltips appear together when hovering over the same x value
+)
+
+# Display the chart
+fig.show()
