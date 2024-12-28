@@ -1,5 +1,3 @@
-# Opening Frequency Analysis and Visualisation
-
 import mysql.connector
 import pandas as pd
 import plotly.express as px
@@ -15,8 +13,8 @@ db_config = {
 # Connect to the database
 conn = mysql.connector.connect(**db_config)
 
-# SQL query to retrieve relevant data
-query = """
+# SQL query to retrieve relevant data for openings
+opening_query = """
 SELECT opening_name, COUNT(*) AS game_count, 
        CONCAT(year, '-', LPAD(month, 2, '0'), '-01') AS date
 FROM openings
@@ -24,73 +22,82 @@ GROUP BY opening_name, year, month
 ORDER BY year, month ASC;
 """
 
-# Execute query and load data into a Pandas DataFrame
-df = pd.read_sql(query, conn)
+# SQL query to retrieve relevant data for endgames
+endgame_query = """
+SELECT endgame, COUNT(*) AS game_count
+FROM openings
+GROUP BY endgame
+ORDER BY game_count DESC;
+"""
+
+# Execute queries and load data into Pandas DataFrames
+openings_df = pd.read_sql(opening_query, conn)
+endgames_df = pd.read_sql(endgame_query, conn)
 
 # Close the connection
 conn.close()
 
-# Convert 'date' column to datetime
-df['date'] = pd.to_datetime(df['date'])
-
-# Create a full range of months from Dec 2012 to Dec 2013
+# Process openings data
+openings_df['date'] = pd.to_datetime(openings_df['date'])
 full_date_range = pd.date_range(start="2012-12-01", end="2013-12-01", freq='MS')
-
-# Create a DataFrame with every month in the range and merge with the original data
 full_df = pd.DataFrame({'date': full_date_range})
-df = pd.merge(full_df, df, on='date', how='left')
-
-# Fill missing values for `opening_name` and `game_count` with default values
-df['opening_name'] = df['opening_name'].fillna('No Data')
-df['game_count'] = df['game_count'].fillna(0)
-
-# Calculate total games per month
-monthly_totals = df.groupby('date')['game_count'].sum().reset_index()
+openings_df = pd.merge(full_df, openings_df, on='date', how='left')
+openings_df['opening_name'] = openings_df['opening_name'].fillna('No Data')
+openings_df['game_count'] = openings_df['game_count'].fillna(0)
+monthly_totals = openings_df.groupby('date')['game_count'].sum().reset_index()
 monthly_totals.rename(columns={'game_count': 'total_games'}, inplace=True)
-
-# Merge total games back into the original DataFrame
-df = pd.merge(df, monthly_totals, on='date')
-
-# Calculate the percentage of games played for each opening
-df['percentage'] = (df['game_count'] / df['total_games']) * 100
-df['percentage'] = df['percentage'].fillna(0)  # Fill NaN percentages with 0
-
-# Calculate total games for each opening across the dataset
+openings_df = pd.merge(openings_df, monthly_totals, on='date')
+openings_df['percentage'] = (openings_df['game_count'] / openings_df['total_games']) * 100
+openings_df['percentage'] = openings_df['percentage'].fillna(0)
 total_opening_counts = (
-    df.groupby('opening_name')['game_count']
+    openings_df.groupby('opening_name')['game_count']
     .sum()
     .reset_index()
     .sort_values('game_count', ascending=False)
 )
 
-# Select the top 15 most popular openings
-top_15_openings = total_opening_counts.head(15)['opening_name'].tolist()
+# Get top 15 openings
+top_15_openings = total_opening_counts.head(15)
 
-# Filter the dataset to include only the top 15 openings
-df_top_15 = df[df['opening_name'].isin(top_15_openings)]
+# Print the top 15 openings
+print("Top 15 Chess Openings:")
+for i, row in enumerate(top_15_openings.itertuples(), start=1):
+    print(f"{i}. {row.opening_name} - {row.game_count} games")
 
-# Format the date for better x-axis display
-df_top_15['formatted_date'] = df_top_15['date'].dt.strftime('%b %Y')
+# Process endgames data
+endgames_df = endgames_df.sort_values('game_count', ascending=False).reset_index(drop=True)
 
-# Create the interactive line chart using Plotly
+# Get top 15 endgames
+top_15_endgames = endgames_df.head(15)
+
+# Print the top 15 endgames
+print("\nTop 15 Chess Endgames:")
+for i, row in top_15_endgames.iterrows():
+    print(f"{i + 1}. {row['endgame']} - {row['game_count']} games")
+
+# Filter dataset for visualization
+df_top_15_openings = openings_df[openings_df['opening_name'].isin(top_15_openings['opening_name'])]
+df_top_15_openings['formatted_date'] = df_top_15_openings['date'].dt.strftime('%b %Y')
+
+# Create interactive line chart for openings
 fig = px.line(
-    df_top_15,
+    df_top_15_openings,
     x="formatted_date",
     y="percentage",
     color="opening_name",
-    title="Chess Opening Popularity Over Time (Top 20 Openings)",
+    title="Chess Opening Popularity Over Time (Top 15 Openings)",
     labels={"formatted_date": "Time (Months)", "percentage": "% of Games Played"},
     hover_data={"opening_name": True, "percentage": ":.2f"},
 )
 
-# Customize the layout
+# Customize layout
 fig.update_layout(
     xaxis_title="Time (Months)",
     yaxis_title="% of Games Played",
     legend_title="Opening Name",
     xaxis_tickangle=45,
     template="plotly_white",
-    hovermode="x unified",  # Makes tooltips appear together when hovering over the same x value
+    hovermode="x unified",
 )
 
 # Display the chart
