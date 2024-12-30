@@ -1,0 +1,74 @@
+import mysql.connector
+from mysql.connector import Error
+import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+import matplotlib.pyplot as plt
+
+# MySQL connection settings
+db_config = {
+    'user': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'database': 'chess_openings'
+}
+
+try:
+    # Connect to the database
+    connection = mysql.connector.connect(**db_config)
+
+    if connection.is_connected():
+        print("Connected to the database")
+
+        # SQL query to retrieve relevant data
+        query = """
+        SELECT WhiteElo, BlackElo, 
+               CASE Result 
+                   WHEN '1-0' THEN 1 
+                   WHEN '0-1' THEN 0 
+                   ELSE 0.5 
+               END AS Result_numeric,
+               day, month, year
+        FROM openings;
+        """
+
+        # Load data into a Pandas DataFrame
+        df = pd.read_sql(query, connection)
+
+        # Data preprocessing
+        scaler = StandardScaler()
+        features = ['WhiteElo', 'BlackElo', 'Result_numeric', 'day', 'month', 'year']
+        X = scaler.fit_transform(df[features])
+
+        # Perform K-Means clustering
+        kmeans = KMeans(n_clusters=5, random_state=42)
+        df['Cluster'] = kmeans.fit_predict(X)
+
+        # Display cluster centers
+        print("Cluster Centers:")
+        print(kmeans.cluster_centers_)
+
+        # Plot silhouette score to find optimal K
+        silhouette_scores = []
+        K = range(2, 5)
+        for k in K:
+            kmeans = KMeans(n_clusters=k, random_state=42)
+            labels = kmeans.fit_predict(X)
+            score = silhouette_score(X, labels)
+            silhouette_scores.append(score)
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(K, silhouette_scores, marker='o')
+        plt.xlabel('Number of clusters')
+        plt.ylabel('Silhouette Score')
+        plt.title('Silhouette Score for Optimal K')
+        plt.show()
+
+except Error as e:
+    print(f"Error: {e}")
+
+finally:
+    if connection.is_connected():
+        connection.close()
+        print("MySQL connection is closed")
