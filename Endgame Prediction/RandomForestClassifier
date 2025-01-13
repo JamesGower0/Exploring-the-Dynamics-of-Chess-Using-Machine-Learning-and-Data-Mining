@@ -1,0 +1,112 @@
+import mysql.connector
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+import matplotlib.pyplot as plt
+from sklearn.metrics import f1_score
+import sqlalchemy
+
+
+# MySQL database configuration
+db_config = {
+    'username': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'port': 3306,
+    'database': 'chess'
+}
+
+# Create a SQLAlchemy engine
+connection_url = (
+    f"mysql+pymysql://{db_config['username']}:{db_config['password']}@"
+    f"{db_config['host']}:{db_config['port']}/{db_config['database']}"
+)
+engine = sqlalchemy.create_engine(connection_url)
+
+# Query to get the chess opening data
+query = "SELECT opening_name, WhiteElo, BlackElo, Event, Result, endgame, day, month, year FROM ChessGames WHERE endgame != 'endgame not reached'"
+
+# Retrieve data into a pandas dataframe
+df = pd.read_sql(query, engine)
+
+# Show the first few rows
+print(df.head())
+
+# Label encode the 'endgame' column
+le_endgame = LabelEncoder()
+df['endgame'] = le_endgame.fit_transform(df['endgame'])
+
+# Encode categorical columns
+le_result = LabelEncoder()
+df['Result'] = le_result.fit_transform(df['Result'])
+
+le_event = LabelEncoder()
+df['Event'] = le_event.fit_transform(df['Event'])
+
+le_opening = LabelEncoder()
+df['opening_name'] = le_opening.fit_transform(df['opening_name'])
+
+# Scale numerical columns
+scaler = StandardScaler()
+df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']])
+
+# Split the data into features and labels
+X = df.drop('endgame', axis=1)  # Features
+y = df['endgame']  # Target variable
+
+# Check the class distribution before balancing
+print("Class distribution before balancing:", Counter(y))
+
+# Remove classes with fewer than 2 samples
+min_samples = 2
+class_counts = y.value_counts()
+valid_classes = class_counts[class_counts >= min_samples].index
+
+# Filter the dataset to only include valid classes
+X = X[y.isin(valid_classes)]
+y = y[y.isin(valid_classes)]
+
+# Check class distribution after filtering
+print("Class distribution after filtering rare classes:", Counter(y))
+
+# Use SMOTE to balance classes
+smote = SMOTE(random_state=42, k_neighbors=1)
+X_balanced, y_balanced = smote.fit_resample(X, y)
+
+# Check class distribution after SMOTE
+print("Class distribution after balancing:", Counter(y_balanced))
+
+# Split the balanced dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+
+# Train a Random Forest Classifier
+rf_model = RandomForestClassifier(random_state=42, n_estimators=100)
+rf_model.fit(X_train, y_train)
+
+# Make predictions
+y_pred = rf_model.predict(X_test)
+
+# Evaluate the model
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')  # Weighted F1 score for imbalanced classes
+print(f'Random Forest Accuracy: {accuracy:.2f}')
+print(f'Random Forest F1 Score (Weighted): {f1:.2f}')
+print(classification_report(y_test, y_pred))
+
+
+# Plot feature importance with features on the x-axis
+importances = rf_model.feature_importances_
+indices = importances.argsort()  # Sort indices by feature importance
+
+plt.figure(figsize=(16, 6))
+plt.title('Feature Importances')
+plt.bar(range(len(indices)), importances[indices], align='center')
+plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.tight_layout()
+plt.show()
