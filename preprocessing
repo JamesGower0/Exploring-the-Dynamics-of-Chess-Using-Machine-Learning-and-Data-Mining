@@ -160,7 +160,7 @@ def extract_date_components(date):
 
 
 def processGames():
-    with open("LichessGames/lichess_db_standard_rated_2013-12.pgn") as pgn:
+    with open("LichessGames/lichess_db_standard_rated_2013-01.pgn") as pgn:
         game_counter = 0
         valid_game_counter = 0
         game = chess.pgn.read_game(pgn)  # Read the first game
