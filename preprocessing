@@ -7,7 +7,7 @@ db_config = {
     'user': 'root',
     'password': 'b5CaQ9WK2',
     'host': '127.0.0.1',
-    'database': 'chess_openings'
+    'database': 'chess'
 }
 
 # Connect to MySQL
@@ -205,7 +205,7 @@ def processGames():
             try:
                 cursor.execute(
                     """
-                    INSERT INTO openings (opening_name, WhiteElo, BlackElo, Event, Result, endgame, day, month, year)
+                    INSERT INTO ChessGames (opening_name, WhiteElo, BlackElo, Event, Result, endgame, day, month, year)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (opening_name, white_elo, black_elo, event, result, endgame, day, month, year)
