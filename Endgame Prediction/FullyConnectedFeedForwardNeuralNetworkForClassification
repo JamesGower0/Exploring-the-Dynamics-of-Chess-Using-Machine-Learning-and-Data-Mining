@@ -23,8 +23,8 @@ COME BACK TO WHEN YOU HAVE HPC
 # Create a custom Adam optimizer with a lower learning rate
 
 #OPTIMIZER = Adam(learning_rate=0.001)
-EPOCHS = 64
-BATCH_SIZE = 512
+EPOCHS = 128
+BATCH_SIZE = 128
 ACTIVATION = 'relu'
 
 
