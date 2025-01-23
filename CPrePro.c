@@ -4,7 +4,7 @@
 #include <ctype.h>
 
 #define MAX_LINE_LENGTH 1024
-#define MAX_MOVES 4096
+#define MAX_MOVES 8192
 #define MAX_ENDGAME 128
 
 // Function prototypes
@@ -232,7 +232,7 @@ void compress_chess_notation(const char *input, char *output) {
             }
         }
         // Skip characters like '+' and '#'
-        else if (*ptr == '+' || *ptr == '#' || *ptr == 'Q' || *ptr == 'R' || *ptr == 'N' || *ptr == 'B' || *ptr == 'P' || *ptr =='.' || *ptr == ']' || *ptr == '}' || *ptr == '{' || *ptr == '-') {
+        else if (*ptr == '+' || *ptr == '#' || *ptr == 'Q' || *ptr == 'R' || *ptr == 'N' || *ptr == 'B' || *ptr == 'P' || *ptr =='.' || *ptr == ']' || *ptr == '}' || *ptr == '{' || *ptr == '-' || *ptr == '/') {
             ptr++;
         }
         // Replace line breaks with spaces
