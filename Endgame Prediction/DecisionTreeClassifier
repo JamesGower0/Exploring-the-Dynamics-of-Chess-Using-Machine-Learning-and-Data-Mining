@@ -1,11 +1,13 @@
-import cudf
-import cupy as cp
-from cuml.preprocessing import LabelEncoder, StandardScaler
-from cuml.ensemble import RandomForestClassifier
-from cuml.metrics import accuracy_score, f1_score
-from cuml.dask.oversampling import SMOTE
-import dask_cudf
-from sqlalchemy import create_engine
+import sqlalchemy
+import modin.pandas as pd  # Parallelized Pandas
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from imblearn.over_sampling import SMOTE
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score, classification_report, f1_score
+from joblib import Parallel, delayed  # Parallel processing
+import matplotlib.pyplot as plt
+import numpy as np
 
 # MySQL database configuration
 db_config = {
@@ -15,13 +17,15 @@ db_config = {
     'port': 3306,
     'database': 'chess'
 }
+
+# Create a SQLAlchemy engine
 connection_url = (
     f"mysql+pymysql://{db_config['username']}:{db_config['password']}@"
     f"{db_config['host']}:{db_config['port']}/{db_config['database']}"
 )
-engine = create_engine(connection_url)
+engine = sqlalchemy.create_engine(connection_url)
 
-# Optimized SQL query
+# SQL query (unchanged)
 query = """
 SELECT 
     opening AS opening_name, 
@@ -37,48 +41,79 @@ FROM games
 WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
 """
 
-# Load data into GPU dataframe
-df = dask_cudf.from_sql_table(query, con=engine).compute()
+# Retrieve data into a Modin dataframe
+df = pd.read_sql(query, engine)
 
-# Label Encoding
-le = LabelEncoder()
-df['endgame'] = le.fit_transform(df['endgame'])
-df['Result'] = le.fit_transform(df['Result'])
-df['Event'] = le.fit_transform(df['Event'])
-df['opening_name'] = le.fit_transform(df['opening_name'])
+# Parallelized label encoding
+def encode_column(column):
+    le = LabelEncoder()
+    return le.fit_transform(column)
 
-# Standardize numerical features
-scaler = StandardScaler()
-df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
-    df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']]
-)
+df['endgame'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['endgame']))
+df['Result'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['Result']))
+df['Event'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['Event']))
+df['opening_name'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['opening_name']))
+
+# Parallelized feature scaling using Numba
+from numba import njit
+
+@njit
+def scale_features(data):
+    mean = data.mean()
+    std = data.std()
+    return (data - mean) / std
+
+scaled_features = ['WhiteElo', 'BlackElo', 'day', 'month', 'year']
+for feature in scaled_features:
+    df[feature] = scale_features(df[feature].values)
 
 # Features and labels
-X = df.drop('endgame', axis=1)
-y = df['endgame']
+X = df.drop('endgame', axis=1)  # Features
+y = df['endgame']  # Target variable
 
-# Filter rare classes
+# Filter out rare classes (less than 5 samples)
+from collections import Counter
 class_counts = y.value_counts()
 valid_classes = class_counts[class_counts >= 5].index
+
 X = X[y.isin(valid_classes)]
 y = y[y.isin(valid_classes)]
 
+print("Class distribution after filtering rare classes:", Counter(y))
+
 # Balance classes using SMOTE
-smote = SMOTE(random_state=42)
+smote = SMOTE(random_state=42, k_neighbors=5)
 X_balanced, y_balanced = smote.fit_resample(X, y)
 
-# Split data
-from cuml.model_selection import train_test_split
-X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+print("Class distribution after balancing:", Counter(y_balanced))
 
-# Train GPU Decision Tree Classifier
-dt_model = RandomForestClassifier(random_state=42)
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X_balanced, y_balanced, test_size=0.2, random_state=42
+)
+
+# Train a Decision Tree Classifier
+dt_model = DecisionTreeClassifier(random_state=42)
 dt_model.fit(X_train, y_train)
 
-# Predictions and evaluation
+# Make predictions and evaluate
 y_pred = dt_model.predict(X_test)
 accuracy = accuracy_score(y_test, y_pred)
 f1 = f1_score(y_test, y_pred, average='weighted')
 
 print(f'Decision Tree Accuracy: {accuracy:.2f}')
 print(f'Decision Tree F1 Score (Weighted): {f1:.2f}')
+print(classification_report(y_test, y_pred))
+
+# Plot feature importance
+importances = dt_model.feature_importances_
+indices = importances.argsort()
+
+plt.figure(figsize=(16, 6))
+plt.title('Feature Importances')
+plt.bar(range(len(indices)), importances[indices], align='center')
+plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.tight_layout()
+plt.show()
