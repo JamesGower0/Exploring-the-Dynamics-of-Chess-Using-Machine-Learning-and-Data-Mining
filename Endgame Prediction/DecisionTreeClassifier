@@ -27,7 +27,20 @@ connection_url = (
 engine = sqlalchemy.create_engine(connection_url)
 
 # Query to get the chess opening data
-query = "SELECT opening_name, WhiteElo, BlackElo, Event, Result, endgame, day, month, year FROM ChessGames WHERE endgame != 'endgame not reached'"
+query = """
+SELECT 
+    opening AS opening_name, 
+    whiteelo AS WhiteElo, 
+    blackelo AS BlackElo, 
+    event AS Event, 
+    result AS Result, 
+    endgame, 
+    DAY(date) AS day, 
+    MONTH(date) AS month, 
+    YEAR(date) AS year 
+FROM games 
+WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
+"""
 
 # Retrieve data into a pandas dataframe
 df = pd.read_sql(query, engine)
@@ -50,7 +63,9 @@ df['opening_name'] = le_opening.fit_transform(df['opening_name'])
 
 # Scale numerical columns
 scaler = StandardScaler()
-df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']])
+df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
+    df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']]
+)
 
 # Split the data into features and labels
 X = df.drop('endgame', axis=1)  # Features
@@ -60,7 +75,7 @@ y = df['endgame']  # Target variable
 print("Class distribution before balancing:", Counter(y))
 
 # Remove classes with fewer than k+1 samples for SMOTE (k = 3)
-min_samples = 8 
+min_samples = 5
 class_counts = y.value_counts()
 valid_classes = class_counts[class_counts >= min_samples].index
 
@@ -76,7 +91,9 @@ X_balanced, y_balanced = smote.fit_resample(X, y)
 print("Class distribution after balancing:", Counter(y_balanced))
 
 # Split the balanced dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(
+    X_balanced, y_balanced, test_size=0.2, random_state=42
+)
 
 # Train a Decision Tree Classifier
 dt_model = DecisionTreeClassifier(random_state=42)
@@ -105,10 +122,6 @@ plt.ylabel('Importance')
 plt.tight_layout()
 plt.show()
 
-
-
-
-
 # Select the first 100 samples (or randomly sample 100 rows)
 sample_indices = np.random.choice(X_test.index, size=100, replace=False)
 X_sample = X_test.loc[sample_indices]
@@ -130,15 +143,10 @@ results_df['Predicted Endgame'] = y_pred_labels
 print(results_df.head(100))
 
 # Optionally, save to CSV for further review
-results_df.to_csv("decision_tree_predictions_sample.csv", index=False)
-
-
-
-
+# results_df.to_csv("decision_tree_predictions_sample.csv", index=False)
 
 from sklearn.model_selection import cross_val_score
 
 cv_scores = cross_val_score(dt_model, X_balanced, y_balanced, cv=5, scoring='accuracy')
 print(f"Cross-Validation Accuracy Scores: {cv_scores}")
 print(f"Mean CV Accuracy: {cv_scores.mean():.2f} ± {cv_scores.std():.2f}")
-# high variance -> overfitting, low variance -> generalising well

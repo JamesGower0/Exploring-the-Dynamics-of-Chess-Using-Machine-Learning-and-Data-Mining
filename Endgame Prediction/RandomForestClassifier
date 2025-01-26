@@ -5,11 +5,9 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from imblearn.over_sampling import SMOTE
 from collections import Counter
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, f1_score
 import matplotlib.pyplot as plt
-from sklearn.metrics import f1_score
 import sqlalchemy
-
 
 # MySQL database configuration
 db_config = {
@@ -27,10 +25,23 @@ connection_url = (
 )
 engine = sqlalchemy.create_engine(connection_url)
 
-# Query to get the chess opening data
-query = "SELECT opening_name, WhiteElo, BlackElo, Event, Result, endgame, day, month, year FROM ChessGames WHERE endgame != 'endgame not reached'"
+# Query to get the chess data
+query = """
+SELECT 
+    opening AS opening_name, 
+    whiteelo AS WhiteElo, 
+    blackelo AS BlackElo, 
+    event AS Event, 
+    result AS Result, 
+    endgame, 
+    DAY(date) AS day, 
+    MONTH(date) AS month, 
+    YEAR(date) AS year 
+FROM games 
+WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
+"""
 
-# Retrieve data into a pandas dataframe
+# Retrieve data into a pandas DataFrame
 df = pd.read_sql(query, engine)
 
 # Show the first few rows
@@ -52,7 +63,9 @@ df['opening_name'] = le_opening.fit_transform(df['opening_name'])
 
 # Scale numerical columns
 scaler = StandardScaler()
-df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']])
+df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
+    df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']]
+)
 
 # Split the data into features and labels
 X = df.drop('endgame', axis=1)  # Features
@@ -96,7 +109,6 @@ f1 = f1_score(y_test, y_pred, average='weighted')  # Weighted F1 score for imbal
 print(f'Random Forest Accuracy: {accuracy:.2f}')
 print(f'Random Forest F1 Score (Weighted): {f1:.2f}')
 print(classification_report(y_test, y_pred))
-
 
 # Plot feature importance with features on the x-axis
 importances = rf_model.feature_importances_
