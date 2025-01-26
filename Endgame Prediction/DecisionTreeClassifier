@@ -1,14 +1,11 @@
-import sqlalchemy
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from imblearn.over_sampling import SMOTE
-from collections import Counter
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score, classification_report, f1_score
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
+import cudf
+import cupy as cp
+from cuml.preprocessing import LabelEncoder, StandardScaler
+from cuml.ensemble import RandomForestClassifier
+from cuml.metrics import accuracy_score, f1_score
+from cuml.dask.oversampling import SMOTE
+import dask_cudf
+from sqlalchemy import create_engine
 
 # MySQL database configuration
 db_config = {
@@ -18,15 +15,13 @@ db_config = {
     'port': 3306,
     'database': 'chess'
 }
-
-# Create a SQLAlchemy engine
 connection_url = (
     f"mysql+pymysql://{db_config['username']}:{db_config['password']}@"
     f"{db_config['host']}:{db_config['port']}/{db_config['database']}"
 )
-engine = sqlalchemy.create_engine(connection_url)
+engine = create_engine(connection_url)
 
-# Query to get the chess opening data
+# Optimized SQL query
 query = """
 SELECT 
     opening AS opening_name, 
@@ -42,111 +37,48 @@ FROM games
 WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
 """
 
-# Retrieve data into a pandas dataframe
-df = pd.read_sql(query, engine)
+# Load data into GPU dataframe
+df = dask_cudf.from_sql_table(query, con=engine).compute()
 
-# Show the first few rows
-print(df.head())
+# Label Encoding
+le = LabelEncoder()
+df['endgame'] = le.fit_transform(df['endgame'])
+df['Result'] = le.fit_transform(df['Result'])
+df['Event'] = le.fit_transform(df['Event'])
+df['opening_name'] = le.fit_transform(df['opening_name'])
 
-# Label encode categorical columns
-le_endgame = LabelEncoder()
-df['endgame'] = le_endgame.fit_transform(df['endgame'])
-
-le_result = LabelEncoder()
-df['Result'] = le_result.fit_transform(df['Result'])
-
-le_event = LabelEncoder()
-df['Event'] = le_event.fit_transform(df['Event'])
-
-le_opening = LabelEncoder()
-df['opening_name'] = le_opening.fit_transform(df['opening_name'])
-
-# Scale numerical columns
+# Standardize numerical features
 scaler = StandardScaler()
 df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
     df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']]
 )
 
-# Split the data into features and labels
-X = df.drop('endgame', axis=1)  # Features
-y = df['endgame']  # Target variable
+# Features and labels
+X = df.drop('endgame', axis=1)
+y = df['endgame']
 
-# Check the class distribution before balancing
-print("Class distribution before balancing:", Counter(y))
-
-# Remove classes with fewer than k+1 samples for SMOTE (k = 3)
-min_samples = 5
+# Filter rare classes
 class_counts = y.value_counts()
-valid_classes = class_counts[class_counts >= min_samples].index
-
+valid_classes = class_counts[class_counts >= 5].index
 X = X[y.isin(valid_classes)]
 y = y[y.isin(valid_classes)]
 
-print("Class distribution after filtering rare classes:", Counter(y))
-
-# Use SMOTE to balance classes with k_neighbors=3
-smote = SMOTE(random_state=42, k_neighbors=5)
+# Balance classes using SMOTE
+smote = SMOTE(random_state=42)
 X_balanced, y_balanced = smote.fit_resample(X, y)
 
-print("Class distribution after balancing:", Counter(y_balanced))
+# Split data
+from cuml.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
 
-# Split the balanced dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X_balanced, y_balanced, test_size=0.2, random_state=42
-)
-
-# Train a Decision Tree Classifier
-dt_model = DecisionTreeClassifier(random_state=42)
+# Train GPU Decision Tree Classifier
+dt_model = RandomForestClassifier(random_state=42)
 dt_model.fit(X_train, y_train)
 
-# Make predictions
+# Predictions and evaluation
 y_pred = dt_model.predict(X_test)
-
-# Evaluate the model
 accuracy = accuracy_score(y_test, y_pred)
-f1 = f1_score(y_test, y_pred, average='weighted')  # Weighted average for imbalanced classes
+f1 = f1_score(y_test, y_pred, average='weighted')
+
 print(f'Decision Tree Accuracy: {accuracy:.2f}')
 print(f'Decision Tree F1 Score (Weighted): {f1:.2f}')
-print(classification_report(y_test, y_pred))
-
-# Plot feature importance
-importances = dt_model.feature_importances_
-indices = importances.argsort()
-
-plt.figure(figsize=(16, 6))
-plt.title('Feature Importances')
-plt.bar(range(len(indices)), importances[indices], align='center')
-plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
-plt.xlabel('Features')
-plt.ylabel('Importance')
-plt.tight_layout()
-plt.show()
-
-# Select the first 100 samples (or randomly sample 100 rows)
-sample_indices = np.random.choice(X_test.index, size=100, replace=False)
-X_sample = X_test.loc[sample_indices]
-y_true_sample = y_test.loc[sample_indices]
-
-# Make predictions
-y_pred_sample = dt_model.predict(X_sample)
-
-# Decode the labels back to original categories
-y_true_labels = le_endgame.inverse_transform(y_true_sample)
-y_pred_labels = le_endgame.inverse_transform(y_pred_sample)
-
-# Combine the data into a DataFrame
-results_df = X_sample.copy()
-results_df['True Endgame'] = y_true_labels
-results_df['Predicted Endgame'] = y_pred_labels
-
-# Display the DataFrame
-print(results_df.head(100))
-
-# Optionally, save to CSV for further review
-# results_df.to_csv("decision_tree_predictions_sample.csv", index=False)
-
-from sklearn.model_selection import cross_val_score
-
-cv_scores = cross_val_score(dt_model, X_balanced, y_balanced, cv=5, scoring='accuracy')
-print(f"Cross-Validation Accuracy Scores: {cv_scores}")
-print(f"Mean CV Accuracy: {cv_scores.mean():.2f} ± {cv_scores.std():.2f}")
