@@ -1,74 +1,110 @@
-import mysql.connector
-from mysql.connector import Error
-import pandas as pd
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import mysql.connector
 
 # MySQL connection settings
 db_config = {
     'user': 'root',
     'password': 'b5CaQ9WK2',
     'host': '127.0.0.1',
-    'database': 'chess_openings'
+    'database': 'chess'
 }
 
-try:
-    # Connect to the database
-    connection = mysql.connector.connect(**db_config)
+# Connect to MySQL and fetch data
+conn = mysql.connector.connect(**db_config)
+query = """
+SELECT opening, whiteelo, blackelo, result, 
+       DAY(date) AS day, MONTH(date) AS month, YEAR(date) AS year, 
+       endgame, event 
+FROM games;
+"""
+df = pd.read_sql(query, conn)
+conn.close()
 
-    if connection.is_connected():
-        print("Connected to the database")
+# Display the first few rows of the data
+print("Data fetched from MySQL:")
+print(df.head())
 
-        # SQL query to retrieve relevant data
-        query = """
-        SELECT WhiteElo, BlackElo, 
-               CASE Result 
-                   WHEN '1-0' THEN 1 
-                   WHEN '0-1' THEN 0 
-                   ELSE 0.5 
-               END AS Result_numeric,
-               day, month, year
-        FROM openings;
-        """
+# Take a random subset of the data (e.g., 100,000 rows)
+df = df.sample(n=100000, random_state=42)
 
-        # Load data into a Pandas DataFrame
-        df = pd.read_sql(query, connection)
+# Get the most popular openings based on frequency
+top_openings = df['opening'].value_counts().head(50).index
+df = df[df['opening'].isin(top_openings)]
 
-        # Data preprocessing
-        scaler = StandardScaler()
-        features = ['WhiteElo', 'BlackElo', 'Result_numeric', 'day', 'month', 'year']
-        X = scaler.fit_transform(df[features])
+# Encode categorical features
+label_encoder_opening = LabelEncoder()
+label_encoder_event = LabelEncoder()
+label_encoder_endgame = LabelEncoder()
+df['opening_encoded'] = label_encoder_opening.fit_transform(df['opening'])
+df['event_encoded'] = label_encoder_event.fit_transform(df['event'])
+df['endgame_encoded'] = label_encoder_endgame.fit_transform(df['endgame'])
 
-        # Perform K-Means clustering
-        kmeans = KMeans(n_clusters=5, random_state=42)
-        df['Cluster'] = kmeans.fit_predict(X)
+# Add a column for win/loss results in binary format
+df['Win'] = df['result'].apply(lambda x: 1 if x == '1-0' else (0 if x == '0-1' else 0.5))
 
-        # Display cluster centers
-        print("Cluster Centers:")
-        print(kmeans.cluster_centers_)
+# Select relevant features for clustering
+features = df[['opening_encoded', 'whiteelo', 'blackelo', 'day', 'month', 'year', 'event_encoded', 'endgame_encoded']]
 
-        # Plot silhouette score to find optimal K
-        silhouette_scores = []
-        K = range(2, 5)
-        for k in K:
-            kmeans = KMeans(n_clusters=k, random_state=42)
-            labels = kmeans.fit_predict(X)
-            score = silhouette_score(X, labels)
-            silhouette_scores.append(score)
+# Scale features
+scaler = StandardScaler()
+features_scaled = scaler.fit_transform(features)
 
-        plt.figure(figsize=(8, 4))
-        plt.plot(K, silhouette_scores, marker='o')
-        plt.xlabel('Number of clusters')
-        plt.ylabel('Silhouette Score')
-        plt.title('Silhouette Score for Optimal K')
-        plt.show()
+# Apply K-Means clustering and evaluate with Silhouette scores
+silhouette_scores = []
+k_values = range(2, 7)  # Adjust range as needed
 
-except Error as e:
-    print(f"Error: {e}")
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    cluster_labels = kmeans.fit_predict(features_scaled)
+    score = silhouette_score(features_scaled, cluster_labels)
+    print(f'Silhouette Score for k={k}: {score}')
+    silhouette_scores.append(score)
 
-finally:
-    if connection.is_connected():
-        connection.close()
-        print("MySQL connection is closed")
+    # Visualize clusters in 2D using PCA (reduce dimensions for visualization)
+    pca = PCA(n_components=2)
+    reduced_features = pca.fit_transform(features_scaled)
+    df['PCA1'] = reduced_features[:, 0]
+    df['PCA2'] = reduced_features[:, 1]
+    df['Cluster'] = cluster_labels
+    
+    # Plot the clusters for this k
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x='PCA1', y='PCA2', hue='Cluster', palette='Set2')
+    plt.title(f"Clusters Visualized in 2D Space for k={k}")
+    plt.xlabel("PCA Component 1")
+    plt.ylabel("PCA Component 2")
+    plt.legend(title="Cluster")
+    plt.show()
+
+# Plot the Silhouette scores
+plt.figure(figsize=(8, 5))
+plt.plot(k_values, silhouette_scores, marker='o', linestyle='--', color='b')
+plt.title("Silhouette Scores for Different Numbers of Clusters")
+plt.xlabel("Number of Clusters (k)")
+plt.ylabel("Silhouette Score")
+plt.grid()
+plt.show()
+
+# Choose the best k based on the highest Silhouette score
+optimal_k = k_values[silhouette_scores.index(max(silhouette_scores))]
+print(f"Optimal number of clusters based on Silhouette score: {optimal_k}")
+
+# Final K-Means clustering with the optimal number of clusters
+kmeans = KMeans(n_clusters=optimal_k, random_state=42)
+df['Cluster'] = kmeans.fit_predict(features_scaled)
+
+# Analyze the clusters
+for cluster in range(optimal_k):
+    cluster_data = df[df['Cluster'] == cluster]
+    popular_openings = cluster_data['opening'].value_counts().head(5)
+    print(f"Cluster {cluster}:")
+    print(popular_openings)
+    print("Average WhiteElo in cluster:", cluster_data['whiteelo'].mean())
+    print("Average BlackElo in cluster:", cluster_data['blackelo'].mean())
+    print("\n")
