@@ -1,13 +1,13 @@
-import mysql.connector
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from imblearn.over_sampling import SMOTE
-from collections import Counter
-from sklearn.ensemble import RandomForestClassifier
+import cudf  # GPU-accelerated DataFrame (RAPIDS)
+from cuml.preprocessing import LabelEncoder  # GPU-accelerated Label Encoding
+from cuml.ensemble import RandomForestClassifier  # GPU-accelerated Random Forest
+from cuml.preprocessing import StandardScaler  # GPU-accelerated scaling
+from imblearn.over_sampling import SMOTE  # SMOTE for balancing
 from sklearn.metrics import accuracy_score, classification_report, f1_score
+from collections import Counter
 import matplotlib.pyplot as plt
 import sqlalchemy
+import pandas as pd 
 
 # MySQL database configuration
 db_config = {
@@ -25,8 +25,9 @@ connection_url = (
 )
 engine = sqlalchemy.create_engine(connection_url)
 
-# Query to get the chess data
-query = """
+from sqlalchemy import text
+
+query = text("""
 SELECT 
     opening AS opening_name, 
     whiteelo AS WhiteElo, 
@@ -39,43 +40,36 @@ SELECT
     YEAR(date) AS year 
 FROM games 
 WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
-"""
+""")
 
-# Retrieve data into a pandas DataFrame
-df = pd.read_sql(query, engine)
+with engine.connect() as conn:
+    df_pandas = pd.read_sql(query, conn)
 
-# Show the first few rows
-print(df.head())
 
-# Label encode the 'endgame' column
-le_endgame = LabelEncoder()
-df['endgame'] = le_endgame.fit_transform(df['endgame'])
+# Convert to cuDF DataFrame
+df = cudf.DataFrame.from_pandas(df_pandas)
 
-# Encode categorical columns
-le_result = LabelEncoder()
-df['Result'] = le_result.fit_transform(df['Result'])
+# GPU-accelerated Label Encoding
+le = LabelEncoder()
+df['endgame'] = le.fit_transform(df['endgame'])
+df['Result'] = le.fit_transform(df['Result'])
+df['Event'] = le.fit_transform(df['Event'])
+df['opening_name'] = le.fit_transform(df['opening_name'])
 
-le_event = LabelEncoder()
-df['Event'] = le_event.fit_transform(df['Event'])
-
-le_opening = LabelEncoder()
-df['opening_name'] = le_opening.fit_transform(df['opening_name'])
-
-# Scale numerical columns
+# GPU-accelerated Feature Scaling
 scaler = StandardScaler()
-df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
-    df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']]
-)
+scaled_features = ['WhiteElo', 'BlackElo', 'day', 'month', 'year']
+df[scaled_features] = scaler.fit_transform(df[scaled_features])
 
-# Split the data into features and labels
-X = df.drop('endgame', axis=1)  # Features
-y = df['endgame']  # Target variable
+# Features and target variable
+X = df.drop(columns=['endgame'])
+y = df['endgame']
 
-# Check the class distribution before balancing
-print("Class distribution before balancing:", Counter(y))
+# Check class distribution before balancing
+print("Class distribution before balancing:", Counter(y.to_pandas()))
 
 # Remove classes with fewer than 2 samples
-min_samples = 2
+min_samples = 4
 class_counts = y.value_counts()
 valid_classes = class_counts[class_counts >= min_samples].index
 
@@ -84,19 +78,26 @@ X = X[y.isin(valid_classes)]
 y = y[y.isin(valid_classes)]
 
 # Check class distribution after filtering
-print("Class distribution after filtering rare classes:", Counter(y))
+print("Class distribution after filtering rare classes:", Counter(y.to_pandas()))
 
-# Use SMOTE to balance classes
-smote = SMOTE(random_state=42, k_neighbors=1)
-X_balanced, y_balanced = smote.fit_resample(X, y)
+# Balance classes using SMOTE
+smote = SMOTE(random_state=42, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(X.to_pandas(), y.to_pandas())
+
+# Convert balanced data back to cuDF
+X_balanced = cudf.DataFrame.from_pandas(X_balanced)
+y_balanced = cudf.Series(y_balanced)
 
 # Check class distribution after SMOTE
-print("Class distribution after balancing:", Counter(y_balanced))
+print("Class distribution after balancing:", Counter(y_balanced.to_pandas()))
 
 # Split the balanced dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+from cuml.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_balanced, y_balanced, test_size=0.2, random_state=42
+)
 
-# Train a Random Forest Classifier
+# Train a GPU-Accelerated Random Forest Classifier
 rf_model = RandomForestClassifier(random_state=42, n_estimators=100)
 rf_model.fit(X_train, y_train)
 
@@ -104,20 +105,20 @@ rf_model.fit(X_train, y_train)
 y_pred = rf_model.predict(X_test)
 
 # Evaluate the model
-accuracy = accuracy_score(y_test, y_pred)
-f1 = f1_score(y_test, y_pred, average='weighted')  # Weighted F1 score for imbalanced classes
+accuracy = accuracy_score(y_test.to_pandas(), y_pred.to_pandas())
+f1 = f1_score(y_test.to_pandas(), y_pred.to_pandas(), average='weighted')  # Weighted F1 score
 print(f'Random Forest Accuracy: {accuracy:.2f}')
 print(f'Random Forest F1 Score (Weighted): {f1:.2f}')
-print(classification_report(y_test, y_pred))
+print(classification_report(y_test.to_pandas(), y_pred.to_pandas()))
 
-# Plot feature importance with features on the x-axis
-importances = rf_model.feature_importances_
-indices = importances.argsort()  # Sort indices by feature importance
+# Plot feature importance
+importances = rf_model.get_feature_importances()
+indices = importances.argsort()
 
 plt.figure(figsize=(16, 6))
 plt.title('Feature Importances')
 plt.bar(range(len(indices)), importances[indices], align='center')
-plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
+plt.xticks(range(len(indices)), [X_train.columns[i] for i in indices], rotation=90)
 plt.xlabel('Features')
 plt.ylabel('Importance')
 plt.tight_layout()

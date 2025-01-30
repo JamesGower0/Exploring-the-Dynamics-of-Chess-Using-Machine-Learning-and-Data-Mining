@@ -1,11 +1,10 @@
 import sqlalchemy
-import modin.pandas as pd  # Parallelized Pandas
+import pandas as pd  # Standard pandas (not modin)
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 from imblearn.over_sampling import SMOTE
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier  # Standard decision tree
 from sklearn.metrics import accuracy_score, classification_report, f1_score
-from joblib import Parallel, delayed  # Parallel processing
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -41,31 +40,23 @@ FROM games
 WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
 """
 
-# Retrieve data into a Modin dataframe
+# Retrieve data into a pandas dataframe (no modin)
 df = pd.read_sql(query, engine)
 
-# Parallelized label encoding
+# Label encoding
 def encode_column(column):
     le = LabelEncoder()
     return le.fit_transform(column)
 
-df['endgame'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['endgame']))
-df['Result'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['Result']))
-df['Event'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['Event']))
-df['opening_name'] = Parallel(n_jobs=-1)(delayed(encode_column)(df['opening_name']))
+df['endgame'] = encode_column(df['endgame'])
+df['Result'] = encode_column(df['Result'])
+df['Event'] = encode_column(df['Event'])
+df['opening_name'] = encode_column(df['opening_name'])
 
-# Parallelized feature scaling using Numba
-from numba import njit
-
-@njit
-def scale_features(data):
-    mean = data.mean()
-    std = data.std()
-    return (data - mean) / std
-
+# Feature scaling (using pandas for scaling)
 scaled_features = ['WhiteElo', 'BlackElo', 'day', 'month', 'year']
 for feature in scaled_features:
-    df[feature] = scale_features(df[feature].values)
+    df[feature] = (df[feature] - df[feature].mean()) / df[feature].std()
 
 # Features and labels
 X = df.drop('endgame', axis=1)  # Features
@@ -74,7 +65,7 @@ y = df['endgame']  # Target variable
 # Filter out rare classes (less than 5 samples)
 from collections import Counter
 class_counts = y.value_counts()
-valid_classes = class_counts[class_counts >= 5].index
+valid_classes = class_counts[class_counts >= 4].index
 
 X = X[y.isin(valid_classes)]
 y = y[y.isin(valid_classes)]
@@ -82,7 +73,7 @@ y = y[y.isin(valid_classes)]
 print("Class distribution after filtering rare classes:", Counter(y))
 
 # Balance classes using SMOTE
-smote = SMOTE(random_state=42, k_neighbors=5)
+smote = SMOTE(random_state=42, k_neighbors=3)
 X_balanced, y_balanced = smote.fit_resample(X, y)
 
 print("Class distribution after balancing:", Counter(y_balanced))
@@ -92,7 +83,7 @@ X_train, X_test, y_train, y_test = train_test_split(
     X_balanced, y_balanced, test_size=0.2, random_state=42
 )
 
-# Train a Decision Tree Classifier
+# Train a Decision Tree Classifier (using scikit-learn's DecisionTreeClassifier)
 dt_model = DecisionTreeClassifier(random_state=42)
 dt_model.fit(X_train, y_train)
 
