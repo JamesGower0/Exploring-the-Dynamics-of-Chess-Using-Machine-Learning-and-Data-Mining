@@ -192,68 +192,72 @@ void get_unique_piece_types(char *result) {
     strcpy(result, temp);
 }
 
+
 void compress_chess_notation(const char *input, char *output) {
     const char *ptr = input;
     char *out = output;
 
     while (*ptr) {
-        // Skip move numbers (e.g., "1.") by checking for digits followed by a dot
+        // Skip move numbers (e.g., "1.")
         if (isdigit(*ptr) && *(ptr + 1) == '.') {
             while (*ptr && (*ptr == '.' || isdigit(*ptr) || isspace(*ptr))) {
-                ptr++; // Skip the number, dot, and any following spaces
+                ptr++;
             }
-        }
+        } 
         else if (isdigit(*ptr) && isdigit(*(ptr + 1)) && *(ptr + 2) == '.') {
             while (*ptr && (*ptr == '.' || isdigit(*ptr) || isspace(*ptr))) {
                 ptr++;
             }
-        }
+        } 
         else if (isdigit(*ptr) && isdigit(*(ptr + 1)) && isdigit(*(ptr + 2)) && *(ptr + 3) == '.') {
             while (*ptr && (*ptr == '.' || isdigit(*ptr) || isspace(*ptr))) {
                 ptr++;
             }
-        }
-        else if (*ptr == '['){
-            while(*ptr != ']'){
+        } 
+        // Handle bracketed metadata
+        else if (*ptr == '[') {
+            while (*ptr && *ptr != ']') {  // Prevent buffer overrun
                 ptr++;
             }
-            ptr++;
-        }
-        else if(*ptr == '$' && isdigit(*(ptr + 1))){
+            if (*ptr) ptr++;  // Move past the ']'
+        } 
+        // Handle dollar signs with numbers (e.g., $1)
+        else if (*ptr == '$' && isdigit(*(ptr + 1))) {
             while (*ptr && (*ptr == '$' || isdigit(*ptr) || isspace(*ptr))) {
-                ptr++; // Skip the number, dot, and any following spaces
+                ptr++;
             }
-        }
-        // Handle result notation (e.g., "1-0", "0-1", "1/2-1/2")
+        } 
+        // Handle game result notation (e.g., "1-0", "0-1", "1/2-1/2")
         else if ((*ptr == '0') || (*ptr == '1' && *(ptr + 1) == '/') || (*ptr == '1' && *(ptr + 1) == '-')) {
-            // Skip the result part completely (don't copy it to output)
             while (*ptr && (*ptr == ' ' || *ptr == '-' || *ptr == '1' || *ptr == '0' || *ptr == '/' || *ptr == '2')) {
                 ptr++;
             }
-        }
-        // Skip characters like '+' and '#'
-        else if (*ptr == '+' || *ptr == '#' || *ptr == 'Q' || *ptr == 'R' || *ptr == 'N' || *ptr == 'B' || *ptr == 'P' || *ptr =='.' || *ptr == ']' || *ptr == '}' || *ptr == '{' || *ptr == '-' || *ptr == '/') {
+        } 
+        // Skip special characters
+        else if (*ptr == '+' || *ptr == '#' || *ptr == 'Q' || *ptr == 'R' || *ptr == 'N' || *ptr == 'B' || *ptr == 'P' || *ptr == '.' || *ptr == ']' || *ptr == '}' || *ptr == '{' || *ptr == '-' || *ptr == '/') {
             ptr++;
-        }
-        // Replace line breaks with spaces
+        } 
+        // Replace newlines with spaces
         else if (*ptr == '\n') {
             if (out != output && *(out - 1) != ' ') {
-                *out++ = ' '; // Add a single space if the previous character is not a space
+                *out++ = ' ';
             }
             ptr++;
         } 
-        else if (isdigit(*ptr) && !isalpha(*(ptr - 1))){
+        // Ensure `ptr - 1` is valid before accessing
+        else if (isdigit(*ptr) && (ptr == input || !isalpha(*(ptr - 1)))) {
             ptr++;
-        }
-        // Keep valid characters, including spaces
+        } 
+        // Copy valid characters
         else {
             *out++ = *ptr++;
         }
     }
 
-    // Null-terminate the output string
+    // Null-terminate output string
     *out = '\0';
 }
+
 
 void reset_board() {
     // Define the initial state of the chessboard
