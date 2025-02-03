@@ -10,9 +10,6 @@
 // Function prototypes
 void parse_pgn_file(const char *file_path, const char *output_csv);
 void classify_endgame(const char *moves, char *endgame_type);
-int is_major_piece(char piece);
-void generate_named_endgame(char *piece_counts, char *endgame_type);
-const char* piece_name(char symbol);
 void compress_chess_notation(const char *input, char *output);
 
 // Main function
@@ -49,7 +46,7 @@ void parse_pgn_file(const char *file_path, const char *output_csv) {
     fseek(csv_file, 0, SEEK_END);
     long csv_size = ftell(csv_file);
     if (csv_size == 0) {
-        fprintf(csv_file, "Event,Site,Date,White,Black,WhiteElo,BlackElo,Result,ECO,Opening,Termination,TimeControl,Endgame\n");
+        fprintf(csv_file, "Event,Date,WhiteElo,BlackElo,Result,ECO,Opening,Termination,TimeControl,Endgame\n");
     }
 
     rewind(pgn_file);
@@ -57,8 +54,7 @@ void parse_pgn_file(const char *file_path, const char *output_csv) {
     char line[MAX_LINE_LENGTH];
     char game_moves[MAX_MOVES] = {0};
     char game_moves_output[MAX_MOVES] = {0};
-    char event[128] = "", site[256] = "", date[32] = "";
-    char white[128] = "", black[128] = "";
+    char event[128] = "", date[32] = "";
     char result[16] = "", eco[16] = "";
     char opening[256] = "", termination[64] = "", timecontrol[64] = "";
     int white_elo = 0, black_elo = 0;
@@ -70,9 +66,6 @@ void parse_pgn_file(const char *file_path, const char *output_csv) {
         if (line[0] == '[') {
             // Parse headers
             if (strstr(line, "[Event ")) sscanf(line, "[Event \"%[^\"]\"]", event);
-            if (strstr(line, "[Site ")) sscanf(line, "[Site \"%[^\"]\"]", site);
-            if (strstr(line, "[White ")) sscanf(line, "[White \"%[^\"]\"]", white);
-            if (strstr(line, "[Black ")) sscanf(line, "[Black \"%[^\"]\"]", black);
             if (strstr(line, "[WhiteElo ")) sscanf(line, "[WhiteElo \"%d\"]", &white_elo);
             if (strstr(line, "[BlackElo ")) sscanf(line, "[BlackElo \"%d\"]", &black_elo);
             if (strstr(line, "[Result ")) sscanf(line, "[Result \"%[^\"]\"]", result);
@@ -93,8 +86,8 @@ void parse_pgn_file(const char *file_path, const char *output_csv) {
             // End of game: classify endgame and write to CSV
             compress_chess_notation(game_moves, game_moves_output);
             classify_endgame(game_moves_output, endgame_type);
-            fprintf(csv_file, "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",%d,%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
-                    event, site, date, white, black, white_elo, black_elo,
+            fprintf(csv_file, "\"%s\",\"%s\",%d,%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+                    event, date, white_elo, black_elo,
                     result, eco, opening, termination, timecontrol, endgame_type);
 
             // Reset for the next game
@@ -375,4 +368,3 @@ void classify_endgame(const char *input_moves, char *endgame_type) {
     // If no endgame is reached, ensure endgame_type is null
     endgame_type[0] = '\0';
 }
-
