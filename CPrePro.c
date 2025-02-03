@@ -83,12 +83,17 @@ void parse_pgn_file(const char *file_path, const char *output_csv) {
             }
             strncat(game_moves, line, sizeof(game_moves) - strlen(game_moves) - 1);
         } else if (line[0] == '\n' && game_in_progress) {
-            // End of game: classify endgame and write to CSV
-            compress_chess_notation(game_moves, game_moves_output);
-            classify_endgame(game_moves_output, endgame_type);
-            fprintf(csv_file, "\"%s\",\"%s\",%d,%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
-                    event, date, white_elo, black_elo,
-                    result, eco, opening, termination, timecontrol, endgame_type);
+            // End of game: check event type and write to CSV if it matches the criteria
+            if (strcmp(event, "Rated Rapid game") == 0 ||
+                strcmp(event, "Rated Blitz game") == 0 ||
+                strcmp(event, "Rated Classical game") == 0) {
+                
+                compress_chess_notation(game_moves, game_moves_output);
+                classify_endgame(game_moves_output, endgame_type);
+                fprintf(csv_file, "\"%s\",\"%s\",%d,%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+                        event, date, white_elo, black_elo,
+                        result, eco, opening, termination, timecontrol, endgame_type);
+            }
 
             // Reset for the next game
             game_in_progress = 0;
