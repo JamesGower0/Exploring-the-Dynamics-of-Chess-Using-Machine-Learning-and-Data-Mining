@@ -1,0 +1,150 @@
+import cudf  # GPU DataFrame (CuDF) instead of pandas
+import cupy as cp  # GPU-based NumPy replacement
+from cuml.preprocessing import LabelEncoder, StandardScaler
+from cuml.neighbors import KNeighborsClassifier
+from cuml.metrics import accuracy_score, confusion_matrix
+from collections import Counter
+from imblearn.over_sampling import SMOTE  # Use SMOTE from imbalanced-learn (CPU)
+import sqlalchemy
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+
+# MySQL database configuration
+db_config = {
+    'username': 'root',
+    'password': 'b5CaQ9WK2',
+    'host': '127.0.0.1',
+    'port': 3306,
+    'database': 'chess'
+}
+
+# Create a SQLAlchemy engine
+connection_url = (
+    f"mysql+pymysql://{db_config['username']}:{db_config['password']}@"
+    f"{db_config['host']}:{db_config['port']}/{db_config['database']}"
+)
+engine = sqlalchemy.create_engine(connection_url)
+
+from sqlalchemy import text
+
+query = text("""
+SELECT 
+    opening AS opening_name, 
+    whiteelo AS WhiteElo, 
+    blackelo AS BlackElo, 
+    event AS Event, 
+    result AS Result, 
+    endgame, 
+    DAY(date) AS day, 
+    MONTH(date) AS month, 
+    YEAR(date) AS year 
+FROM games 
+WHERE endgame IS NOT NULL AND endgame != 'endgame not reached'
+""")
+
+with engine.connect() as conn:
+    df_pandas = pd.read_sql(query, conn)
+
+
+# Convert to cuDF DataFrame
+df = cudf.DataFrame.from_pandas(df_pandas)
+
+
+# Label encoding for categorical variables
+le_endgame = LabelEncoder()
+df['endgame'] = le_endgame.fit_transform(df['endgame'])
+
+le_result = LabelEncoder()
+df['Result'] = le_result.fit_transform(df['Result'])
+
+le_event = LabelEncoder()
+df['Event'] = le_event.fit_transform(df['Event'])
+
+le_opening = LabelEncoder()
+df['opening_name'] = le_opening.fit_transform(df['opening_name'])
+
+# Standardizing numerical features
+scaler = StandardScaler()
+df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']])
+
+# Split into features and target
+X = df.drop('endgame', axis=1)  # Features
+y = df['endgame']  # Target variable
+
+# Class balancing before SMOTE
+print("Class distribution before balancing:", Counter(y.to_pandas()))
+
+# Remove rare classes
+min_samples = 4
+class_counts = y.value_counts()
+valid_classes = class_counts[class_counts >= min_samples].index
+
+X = X[y.isin(valid_classes)]
+y = y[y.isin(valid_classes)]
+
+# Class distribution after filtering
+print("Class distribution after filtering rare classes:", Counter(y.to_pandas()))
+
+# Apply CPU-based SMOTE for class balancing (from imbalanced-learn)
+smote = SMOTE(random_state=42, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(X.to_pandas(), y.to_pandas())
+
+# Convert back to cuDF for GPU usage
+X_balanced = cudf.DataFrame.from_pandas(X_balanced)
+y_balanced = cudf.Series(y_balanced)
+
+# Check class distribution after SMOTE
+print("Class distribution after balancing:", Counter(y_balanced.to_pandas()))
+
+# Split the data into training and testing sets (with GPU-accelerated method)
+X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+
+# Train GPU-accelerated KNN model
+knn_model = KNeighborsClassifier(n_neighbors=5)
+knn_model.fit(X_train, y_train)
+
+# Make predictions
+y_pred = knn_model.predict(X_test)
+
+# Evaluate using GPU-accelerated accuracy
+accuracy = accuracy_score(y_test, y_pred)
+
+# Compute confusion matrix using cuML
+conf_matrix = confusion_matrix(y_test, y_pred)
+
+# Extract TP, FP, FN for binary classification (if binary classes)
+tp = conf_matrix[1, 1]
+fp = conf_matrix[0, 1]
+fn = conf_matrix[1, 0]
+
+# Calculate precision and recall manually
+precision = tp / (tp + fp) if tp + fp != 0 else 0.0
+recall = tp / (tp + fn) if tp + fn != 0 else 0.0
+
+# Compute F1 score
+f1 = 2 * (precision * recall) / (precision + recall) if precision + recall != 0 else 0.0
+
+# Print results
+print(f'GPU-Accelerated KNN Accuracy: {accuracy:.2f}')
+print(f'GPU-Accelerated KNN Precision: {precision:.2f}')
+print(f'GPU-Accelerated KNN Recall: {recall:.2f}')
+print(f'GPU-Accelerated KNN F1 Score: {f1:.2f}')
+
+
+# Feature Importance using Permutation Importance
+perm_importance = permutation_importance(knn_model, X_test, y_test, n_repeats=10, random_state=42)
+
+# Get the feature importances and sort by importance
+importances = perm_importance.importances_mean
+indices = importances.argsort()  # Sort indices by feature importance
+
+# Plot Feature Importance (same style as Random Forest model)
+plt.figure(figsize=(16, 6))
+plt.title('Feature Importances (Permutation Importance)')
+plt.bar(range(len(indices)), importances[indices], align='center')
+plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.tight_layout()
+plt.show()
