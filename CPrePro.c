@@ -304,7 +304,7 @@ void classify_endgame(const char *input_moves, char *endgame_type) {
     char input_moves_copy[4096] = {0};
     if (strlen(input_moves) >= sizeof(input_moves_copy)) {
         fprintf(stderr, "Input moves string too long\n");
-        exit(EXIT_FAILURE);
+        return; // Skip the game instead of exiting
     }
     strncpy(input_moves_copy, input_moves, sizeof(input_moves_copy) - 1);
     input_moves_copy[sizeof(input_moves_copy) - 1] = '\0';
@@ -314,15 +314,15 @@ void classify_endgame(const char *input_moves, char *endgame_type) {
     while (token != NULL) {
         if (strlen(token) == 4) {
             if (move_count >= 512) {
-                fprintf(stderr, "Too many moves, maximum allowed is 512\n");
-                exit(EXIT_FAILURE);
+                fprintf(stderr, "Too many moves, skipping game\n");
+                return; // Skip the game instead of exiting
             }
             strncpy(moves[move_count], token, sizeof(moves[0]) - 1);
             moves[move_count][sizeof(moves[0]) - 1] = '\0';
             move_count++;
         } else {
             fprintf(stderr, "Invalid move format: %s\n", token);
-            exit(EXIT_FAILURE);
+            return; // Skip the game instead of exiting
         }
         token = strtok(NULL, " ");
     }
