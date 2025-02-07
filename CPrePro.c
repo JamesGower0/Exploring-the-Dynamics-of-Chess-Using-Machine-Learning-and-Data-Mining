@@ -232,7 +232,7 @@ void compress_chess_notation(const char *input, char *output) {
             }
         } 
         // Skip special characters
-        else if (*ptr == '+' || *ptr == '#' || *ptr == 'Q' || *ptr == 'R' || *ptr == 'N' || *ptr == 'B' || *ptr == 'P' || *ptr == '.' || *ptr == ']' || *ptr == '}' || *ptr == '{' || *ptr == '-' || *ptr == '/') {
+        else if (*ptr == '+' || *ptr == '#' || *ptr == 'Q' || *ptr == 'R' || *ptr == 'N' || *ptr == 'B' || *ptr == 'P' || *ptr == '.' || *ptr == ']' || *ptr == '}' || *ptr == '{' || *ptr == '-' || *ptr == '/' || *ptr == '*') {
             ptr++;
         } 
         // Replace newlines with spaces
