@@ -1,0 +1,96 @@
+import pandas as pd  # Standard pandas (not modin)
+import os
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from imblearn.over_sampling import SMOTE
+from sklearn.tree import DecisionTreeClassifier  # Standard decision tree
+from sklearn.metrics import accuracy_score, classification_report, f1_score
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Folder containing CSV files
+csv_folder = "LCG"
+
+# Read all CSV files into a single DataFrame
+dataframes = []
+for file in os.listdir(csv_folder):
+    if file.endswith(".csv"):
+        df = pd.read_csv(os.path.join(csv_folder, file))
+        dataframes.append(df)
+df = pd.concat(dataframes, ignore_index=True)
+
+# Drop rows where 'Endgame' is null
+df = df.dropna(subset=['Endgame'])
+
+# Convert 'Date' into separate day, month, and year columns
+df[['year', 'month', 'day']] = df['Date'].str.split('.', expand=True).astype(int)
+df.drop(columns=['Date'], inplace=True)
+df = df.drop(columns=['ECO'])
+df = df.drop(columns=['TimeControl'])
+df = df.drop(columns=['Termination'])
+
+# Label encoding
+def encode_column(column):
+    le = LabelEncoder()
+    return le.fit_transform(column)
+
+df['Endgame'] = encode_column(df['Endgame'])
+df['Result'] = encode_column(df['Result'])
+df['Event'] = encode_column(df['Event'])
+df['Opening'] = encode_column(df['Opening'])
+
+# Feature scaling (using pandas for scaling)
+scaled_features = ['WhiteElo', 'BlackElo', 'day', 'month', 'year']
+for feature in scaled_features:
+    df[feature] = (df[feature] - df[feature].mean()) / df[feature].std()
+
+# Features and labels
+X = df.drop('Endgame', axis=1)  # Features
+y = df['Endgame']  # Target variable
+
+# Filter out rare classes (less than 5 samples)
+from collections import Counter
+class_counts = y.value_counts()
+valid_classes = class_counts[class_counts >= 50].index
+
+X = X[y.isin(valid_classes)]
+y = y[y.isin(valid_classes)]
+
+print("Class distribution after filtering rare classes:", Counter(y))
+
+# Balance classes using SMOTE
+smote = SMOTE(random_state=42, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(X, y)
+
+print("Class distribution after balancing:", Counter(y_balanced))
+
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X_balanced, y_balanced, test_size=0.2, random_state=42
+)
+
+# Train a Decision Tree Classifier (using scikit-learn's DecisionTreeClassifier)
+dt_model = DecisionTreeClassifier(random_state=42)
+dt_model.fit(X_train, y_train)
+
+# Make predictions and evaluate
+y_pred = dt_model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+print(f'Decision Tree Accuracy: {accuracy:.2f}')
+print(f'Decision Tree F1 Score (Weighted): {f1:.2f}')
+print(classification_report(y_test, y_pred))
+
+# Plot feature importance
+importances = dt_model.feature_importances_
+indices = importances.argsort()
+
+plt.figure(figsize=(16, 6))
+plt.title('Feature Importances')
+plt.bar(range(len(indices)), importances[indices], align='center')
+plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.tight_layout()
+plt.show()
