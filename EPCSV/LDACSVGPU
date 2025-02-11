@@ -1,0 +1,87 @@
+import os
+import pandas as pd
+import cupy as cp
+from cuml.model_selection import train_test_split
+from cuml.preprocessing import LabelEncoder, StandardScaler
+from imblearn.over_sampling import SMOTE
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.metrics import accuracy_score, f1_score
+from collections import Counter
+
+# Folder containing CSV files
+csv_folder = "LCG"
+
+# Load all CSV files into a single DataFrame
+csv_files = [os.path.join(csv_folder, f) for f in os.listdir(csv_folder) if f.endswith('.csv')]
+df_list = [pd.read_csv(file) for file in csv_files]
+df = pd.concat(df_list, ignore_index=True)
+
+# Ensure relevant columns exist
+df = df[['Opening', 'WhiteElo', 'BlackElo', 'Event', 'Result', 'Endgame', 'Date']]  # Update as necessary
+
+df = df.dropna(subset=['Endgame'])  # Drop rows where 'Endgame' is NaN
+
+# Extract date components
+df['Date'] = pd.to_datetime(df['Date'])
+df['day'] = df['Date'].dt.day
+df['month'] = df['Date'].dt.month
+df['year'] = df['Date'].dt.year
+df = df.drop(columns=['Date'])
+
+# Label encode categorical columns
+le_endgame = LabelEncoder()
+df['Endgame'] = le_endgame.fit_transform(df['Endgame'])
+
+le_result = LabelEncoder()
+df['Result'] = le_result.fit_transform(df['Result'])
+
+le_event = LabelEncoder()
+df['Event'] = le_event.fit_transform(df['Event'])
+
+le_opening = LabelEncoder()
+df['Opening'] = le_opening.fit_transform(df['Opening'])
+
+# Scale numerical columns (using CuML for GPU acceleration)
+scaler = StandardScaler()
+df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']])
+
+# Split the data into features and labels
+X = df.drop('Endgame', axis=1)
+y = df['Endgame']
+
+# Convert to GPU arrays using CuPy
+X_gpu = cp.asarray(X)
+y_gpu = cp.asarray(y)
+
+# Check the class distribution before balancing
+print("Class distribution before balancing:", Counter(y_gpu.get()))  # Use .get() to transfer back to CPU for printing
+
+# Remove classes with fewer than a threshold number of samples
+min_samples = 50
+class_counts = cp.asnumpy(y_gpu).tolist()
+class_counts = Counter(class_counts)
+valid_classes = {k for k, v in class_counts.items() if v >= min_samples}
+
+X_gpu = X_gpu[cp.isin(y_gpu, cp.array(list(valid_classes)))]
+y_gpu = y_gpu[cp.isin(y_gpu, cp.array(list(valid_classes)))]
+print("Class distribution after filtering rare classes:", Counter(y_gpu.get()))
+
+# Balance classes using SMOTE (CPU-based, as CuML doesn't provide GPU support for SMOTE)
+smote = SMOTE(random_state=42, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(cp.asnumpy(X_gpu), cp.asnumpy(y_gpu))
+
+# Split into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+
+# Train an LDA model
+lda_model = LinearDiscriminantAnalysis()
+lda_model.fit(X_train, y_train)
+
+# Make predictions
+y_pred = lda_model.predict(X_test)
+
+# Evaluate the model
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')
+print(f'LDA Classifier Accuracy: {accuracy:.2f}')
+print(f'LDA F1 Score (Weighted): {f1:.2f}')
