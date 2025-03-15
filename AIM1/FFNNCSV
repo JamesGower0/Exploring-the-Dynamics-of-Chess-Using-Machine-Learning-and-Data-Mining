@@ -1,0 +1,155 @@
+import os
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+import matplotlib.pyplot as plt
+from keras.optimizers import Adam
+from sklearn.metrics import f1_score
+
+# Define constants for the model
+EPOCHS = 10
+BATCH_SIZE = 128
+ACTIVATION = 'relu'
+
+# Load all CSV files from the folder 'LCG'
+folder_path = 'LCG'  # Folder containing the CSV files
+all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.csv')]
+
+# Concatenate all CSV files into one DataFrame
+df_list = []
+for file in all_files:
+    df = pd.read_csv(file, on_bad_lines='skip')  # Skip problematic rows
+    df_list.append(df)
+
+df = pd.concat(df_list, ignore_index=True)
+
+# Show the first few rows
+print(df.head())
+
+# Split the 'Date' into 'day', 'month', and 'year'
+df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+df['day'] = df['Date'].dt.day
+df['month'] = df['Date'].dt.month
+df['year'] = df['Date'].dt.year
+df.drop('Date', axis=1, inplace=True)
+
+# Remove rows where 'Endgame' is null
+df = df[df['Endgame'].notna()]
+
+# Label encode the 'Endgame' column
+le_endgame = LabelEncoder()
+df['Endgame'] = le_endgame.fit_transform(df['Endgame'].fillna(''))
+
+# Label encode the 'Opening', 'Result', and 'Event' columns
+le_opening_name = LabelEncoder()
+df['Opening'] = le_opening_name.fit_transform(df['Opening'].fillna(''))
+
+le_result = LabelEncoder()
+df['Result'] = le_result.fit_transform(df['Result'].fillna(''))
+
+le_event = LabelEncoder()
+df['Event'] = le_event.fit_transform(df['Event'].fillna(''))
+
+le_eco = LabelEncoder()
+df['ECO'] = le_event.fit_transform(df['ECO'].fillna(''))
+
+le_termination = LabelEncoder()
+df['Termination'] = le_event.fit_transform(df['Termination'].fillna(''))
+
+le_time_control = LabelEncoder()
+df['TimeControl'] = le_event.fit_transform(df['TimeControl'].fillna(''))
+
+# Scale the numerical columns (WhiteElo, BlackElo, day, month, year)
+scaler = StandardScaler()
+df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
+    df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']]
+)
+
+# Split the data into features and labels
+X = df.drop('Endgame', axis=1)  # Features (everything except 'Endgame')
+y = df['Endgame']  # Target variable is 'Endgame'
+
+# Check the class distribution before balancing
+print("Class distribution before balancing:", Counter(y))
+
+# Remove classes with fewer than 50 samples
+min_samples = 100000
+class_counts = y.value_counts()
+valid_classes = class_counts[class_counts >= min_samples].index
+
+# Filter the dataset to only include valid classes
+X = X[y.isin(valid_classes)]
+y = y[y.isin(valid_classes)]
+
+# Check class distribution after filtering
+print("Class distribution after filtering rare classes:", Counter(y))
+
+# Use SMOTE with adjusted n_neighbors
+smote = SMOTE(random_state=7, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(X, y)
+
+# Check class distribution after SMOTE
+print("Class distribution after balancing:", Counter(y_balanced))
+
+# Split the balanced dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=7)
+
+# Create a simple neural network model
+model = Sequential()
+model.add(Dense(64, input_dim=X_train.shape[1], activation='relu'))
+model.add(Dense(64, activation='relu'))
+#model.add(Dense(128, activation='relu'))
+#model.add(Dropout(.08))
+#model.add(Dense(128, activation='relu'))
+#model.add(Dense(128, activation='relu'))
+model.add(Dense(64, activation='relu'))
+model.add(Dense(len(le_endgame.classes_), activation='softmax')) 
+
+# Compile the model
+model.compile(loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=(X_test, y_test))
+
+# Evaluate the model
+loss, accuracy = model.evaluate(X_test, y_test)
+print(f'Accuracy: {accuracy:.2f}')
+
+# Predict the 'endgame' for new data
+predictions = model.predict(X_test)
+predicted_classes = predictions.argmax(axis=1)  # Get the class with the highest probability
+
+# Calculate the F1 score (use 'weighted' to handle class imbalance)
+f1 = f1_score(y_test, predicted_classes, average='weighted')
+print(f'F1 Score (Weighted): {f1:.2f}')
+
+# Show the predicted endgames for the first few test samples
+predicted_endgames = le_endgame.inverse_transform(predicted_classes)
+print(predicted_endgames[:1000])  # Display first 1000 predictions
+
+# Plot the training and validation accuracy
+plt.figure(figsize=(12, 6))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Model Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+
+# Plot the training and validation loss
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Model Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+
+# Show the plots
+plt.tight_layout()
+plt.show()

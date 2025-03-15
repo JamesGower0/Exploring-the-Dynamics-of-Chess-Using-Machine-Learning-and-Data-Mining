@@ -1,0 +1,104 @@
+import os
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from imblearn.over_sampling import SMOTE
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, f1_score
+from collections import Counter
+
+# Folder containing CSV files
+csv_folder = "LCG"
+
+# Read all CSV files into a single DataFrame with a random sample of 20% of the rows
+dataframes = []
+for file in os.listdir(csv_folder):
+    if file.endswith(".csv"):
+        # Use on_bad_lines='skip' to skip problematic lines
+        df = pd.read_csv(os.path.join(csv_folder, file), on_bad_lines='skip')
+        # Randomly sample 20% of the rows
+        df = df.sample(frac=0.2, random_state=7)
+        dataframes.append(df)
+df = pd.concat(dataframes, ignore_index=True)
+
+# Drop rows where 'Endgame' is null
+df = df.dropna(subset=['Endgame'])
+
+# Convert 'Date' into separate day, month, and year columns
+df[['year', 'month', 'day']] = df['Date'].str.split('.', expand=True).astype(int)
+df.drop(columns=['Date'], inplace=True)
+'''df = df.drop(columns=['ECO'])
+df = df.drop(columns=['TimeControl'])
+df = df.drop(columns=['Termination'])'''
+
+# Label encoding
+def encode_column(column):
+    le = LabelEncoder()
+    return le.fit_transform(column)
+
+df['Endgame'] = encode_column(df['Endgame'])
+df['Result'] = encode_column(df['Result'])
+df['Event'] = encode_column(df['Event'])
+df['Opening'] = encode_column(df['Opening'])
+df['ECO'] = encode_column(df['ECO'])
+df['TimeControl'] = encode_column(df['TimeControl'])
+df['Termination'] = encode_column(df['Termination'])
+
+# Feature scaling (using StandardScaler)
+scaler = StandardScaler()
+scaled_features = ['WhiteElo', 'BlackElo', 'day', 'month', 'year']
+df[scaled_features] = scaler.fit_transform(df[scaled_features])
+
+# Features and labels
+X = df.drop('Endgame', axis=1)  # Features
+y = df['Endgame']  # Target variable
+
+# Filter out rare classes (less than 100,000 samples)
+from collections import Counter
+class_counts = y.value_counts()
+valid_classes = class_counts[class_counts >= 480000].index
+
+X = X[y.isin(valid_classes)]
+y = y[y.isin(valid_classes)]
+
+print("Class distribution after filtering rare classes:", Counter(y))
+
+# Balance classes using SMOTE
+smote = SMOTE(random_state=7, k_neighbors=3)
+X_balanced, y_balanced = smote.fit_resample(X, y)
+
+print("Class distribution after balancing:", Counter(y_balanced))
+
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X_balanced, y_balanced, test_size=0.2, random_state=7
+)
+
+# Train a KNN Classifier
+knn_model = KNeighborsClassifier(n_neighbors=5)
+knn_model.fit(X_train, y_train)
+
+# Make predictions and evaluate
+y_pred = knn_model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+print(f'KNN Classifier Accuracy: {accuracy:.2f}')
+print(f'KNN F1 Score (Weighted): {f1:.2f}')
+
+'''
+# Feature Importance using Permutation Importance
+perm_importance = permutation_importance(knn_model, X_test, y_test, n_repeats=10, random_state=69)
+importances = perm_importance.importances_mean
+indices = importances.argsort()
+
+# Plot Feature Importance
+plt.figure(figsize=(16, 6))
+plt.title('Feature Importances (Permutation Importance)')
+plt.bar(range(len(indices)), importances[indices], align='center')
+plt.xticks(range(len(indices)), [X.columns[i] for i in indices], rotation=90)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.tight_layout()
+plt.show()
+'''
