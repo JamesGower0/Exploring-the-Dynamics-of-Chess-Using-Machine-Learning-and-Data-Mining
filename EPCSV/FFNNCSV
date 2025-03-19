@@ -11,27 +11,24 @@ from keras.optimizers import Adam
 from sklearn.metrics import f1_score
 
 # Define constants for the model
-EPOCHS = 32
-BATCH_SIZE = 128
+EPOCHS = 132
+BATCH_SIZE = 256
 ACTIVATION = 'relu'
 
 # Load all CSV files from the folder 'LCG'
-folder_path = '../LCG'  # Folder containing the CSV files
+folder_path = 'LCG'  # Folder containing the CSV files
 all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.csv')]
 
 # Concatenate all CSV files into one DataFrame
 df_list = []
 for file in all_files:
-    df = pd.read_csv(file)
+    df = pd.read_csv(file, on_bad_lines='skip')  # Skip problematic rows
     df_list.append(df)
 
 df = pd.concat(df_list, ignore_index=True)
 
 # Show the first few rows
 print(df.head())
-
-# Drop unnecessary columns
-df.drop(['ECO', 'Termination', 'TimeControl'], axis=1, inplace=True)
 
 # Split the 'Date' into 'day', 'month', and 'year'
 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
@@ -57,6 +54,15 @@ df['Result'] = le_result.fit_transform(df['Result'].fillna(''))
 le_event = LabelEncoder()
 df['Event'] = le_event.fit_transform(df['Event'].fillna(''))
 
+le_eco = LabelEncoder()
+df['ECO'] = le_event.fit_transform(df['ECO'].fillna(''))
+
+le_termination = LabelEncoder()
+df['Termination'] = le_event.fit_transform(df['Termination'].fillna(''))
+
+le_time_control = LabelEncoder()
+df['TimeControl'] = le_event.fit_transform(df['TimeControl'].fillna(''))
+
 # Scale the numerical columns (WhiteElo, BlackElo, day, month, year)
 scaler = StandardScaler()
 df[['WhiteElo', 'BlackElo', 'day', 'month', 'year']] = scaler.fit_transform(
@@ -71,7 +77,7 @@ y = df['Endgame']  # Target variable is 'Endgame'
 print("Class distribution before balancing:", Counter(y))
 
 # Remove classes with fewer than 50 samples
-min_samples = 50
+min_samples = 250000
 class_counts = y.value_counts()
 valid_classes = class_counts[class_counts >= min_samples].index
 
@@ -83,24 +89,22 @@ y = y[y.isin(valid_classes)]
 print("Class distribution after filtering rare classes:", Counter(y))
 
 # Use SMOTE with adjusted n_neighbors
-smote = SMOTE(random_state=42, k_neighbors=3)
-X_balanced, y_balanced = smote.fit_resample(X, y)
+#smote = SMOTE(random_state=7, k_neighbors=3)
+#X_balanced, y_balanced = smote.fit_resample(X, y)
 
 # Check class distribution after SMOTE
-print("Class distribution after balancing:", Counter(y_balanced))
+print("Class distribution after balancing:", Counter(y))
 
 # Split the balanced dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=7)
 
 # Create a simple neural network model
 model = Sequential()
 model.add(Dense(64, input_dim=X_train.shape[1], activation='relu'))
-model.add(Dense(64, activation='relu'))
-#model.add(Dense(128, activation='relu'))
-#model.add(Dropout(.08))
-#model.add(Dense(128, activation='relu'))
-#model.add(Dense(128, activation='relu'))
-model.add(Dense(64, activation='relu'))
+model.add(Dense(128, activation='relu'))
+model.add(Dropout(.08))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(128, activation='relu'))
 model.add(Dense(len(le_endgame.classes_), activation='softmax')) 
 
 # Compile the model
