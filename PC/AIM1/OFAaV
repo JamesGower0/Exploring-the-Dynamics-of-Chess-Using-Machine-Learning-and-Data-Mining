@@ -1,0 +1,102 @@
+import pandas as pd
+import plotly.express as px
+import os
+
+# Folder containing CSV files**
+csv_folder = 'LCG'
+
+# Initialize an empty DataFrame to store aggregated results**
+aggregated_data = pd.DataFrame()
+
+# Load all CSV files into a single DataFrame**
+all_files = [os.path.join(csv_folder, f) for f in os.listdir(csv_folder) if f.endswith('.csv')]
+
+for file in all_files:
+    try:
+        # Read the file in chunks to handle memory issues**
+        chunk_iter = pd.read_csv(file, on_bad_lines='skip', low_memory=False, chunksize=100000)
+        for chunk in chunk_iter:
+            # Process each chunk**
+            chunk['date'] = pd.to_datetime(chunk['Date'], format='%Y.%m.%d', errors='coerce')
+            chunk = chunk.dropna(subset=['date'])  # Drop rows with invalid dates
+            
+            # Filter out games before 2016**
+            chunk = chunk[chunk['date'] >= '2016-01-01']
+            
+            chunk['year_month'] = chunk['date'].dt.to_period('M')
+            
+            # Simplify opening names by removing variations**
+            chunk['Opening'] = chunk['Opening'].str.split(':').str[0].str.strip()
+            
+            # Group by 'Opening' and 'year_month' within the chunk**
+            chunk_grouped = (
+                chunk.groupby(['Opening', 'year_month'])
+                .size()
+                .reset_index(name='game_count')
+            )
+            
+            # Append the grouped data to the aggregated DataFrame**
+            aggregated_data = pd.concat([aggregated_data, chunk_grouped], ignore_index=True)
+    except Exception as e:
+        print(f"Error reading {file}: {e}")
+
+# Group the aggregated data again to combine results from all chunks**
+final_grouped = (
+    aggregated_data.groupby(['Opening', 'year_month'])
+    .sum()
+    .reset_index()
+)
+
+# Convert 'year_month' back to datetime for plotting**
+final_grouped['date'] = final_grouped['year_month'].dt.to_timestamp()
+
+# Calculate total game counts for each opening**
+total_opening_counts = (
+    final_grouped.groupby('Opening')['game_count']
+    .sum()
+    .reset_index()
+    .sort_values('game_count', ascending=False)
+)
+
+# Get top 15 openings**
+top_15_openings = total_opening_counts.head(15)
+
+# Print the top 15 openings**
+print("Top 15 Chess Openings:")
+for i, row in enumerate(top_15_openings.itertuples(), start=1):
+    print(f"{i}. {row.Opening} - {row.game_count} games")
+
+# Filter dataset for visualization**
+df_top_15_openings = final_grouped[final_grouped['Opening'].isin(top_15_openings['Opening'])]
+df_top_15_openings['formatted_date'] = df_top_15_openings['date'].dt.strftime('%b %Y')
+
+# Create interactive line chart for openings with thicker lines
+fig = px.line(
+    df_top_15_openings,
+    x="formatted_date",
+    y="game_count",
+    color="Opening",
+    title="Chess Opening Popularity Over Time (Top 15 Openings, 2016 onwards)",
+    labels={"formatted_date": "Time (Months)", "game_count": "Number of Games"},
+    hover_data={"Opening": True, "game_count": True},
+    line_shape="linear",  # Makes lines straighter between points
+)
+
+# Customize layout with thicker lines
+fig.update_layout(
+    xaxis_title="Time (Months)",
+    yaxis_title="Number of Games",
+    legend_title="Opening Name",
+    xaxis_tickangle=45,
+    template="plotly_white",
+    hovermode="x unified",
+)
+
+# THIS IS THE KEY PART - MAKE LINES THICKER
+fig.update_traces(
+    line=dict(width=4),  # Default is 2, increasing makes lines thicker
+    selector=dict(mode='lines')
+)
+
+# Display the chart
+fig.show()
